@@ -9,7 +9,7 @@ from datetime import timedelta
 
 app = Flask(__name__)
 
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://admin:admin@34.141.145.160:5432/postgres' #Пароль з дійсного замінений на 1234 для гіту
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://admin:admin@34.141.145.160:5432/postgres'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = 'admin'
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
