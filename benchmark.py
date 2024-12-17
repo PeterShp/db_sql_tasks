@@ -1,160 +1,86 @@
-from flask import Flask, request, jsonify
-from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.orm import relationship
-from flask_jwt_extended import (
-    JWTManager, create_access_token, jwt_required, get_jwt, get_jwt_identity
-)
-from passlib.hash import pbkdf2_sha256
-from datetime import timedelta
+import requests
+import time
 
-app = Flask(__name__)
+API_URL = "http://localhost:5000"
 
-# Підключення до БД
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:password@34.141.145.160:5432/postgres'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = 'secret_key'
-app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
+def measure_time(func):
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        elapsed = time.perf_counter() - start
+        return elapsed, result
+    return wrapper
 
-db = SQLAlchemy(app)
-jwt = JWTManager(app)
+@measure_time
+def insert_data(n, token):
+    for i in range(n):
+        data = {
+            "title": f"Book {i}",
+            "author_name": "Author Test",
+            "genre_name": "Genre Test"
+        }
+        requests.post(f"{API_URL}/books", json=data, headers={"Authorization": f"Bearer {token}"})
+    return n
 
-jwt_blocklist = set()
+@measure_time
+def select_all(token):
+    r = requests.get(f"{API_URL}/books", headers={"Authorization": f"Bearer {token}"})
+    return r.json()
 
-@jwt.token_in_blocklist_loader
-def check_if_token_revoked(jwt_header, jwt_payload):
-    jti = jwt_payload["jti"]
-    return jti in jwt_blocklist
+@measure_time
+def select_one(record_id, token):
+    r = requests.get(f"{API_URL}/books/{record_id}", headers={"Authorization": f"Bearer {token}"})
+    return r.status_code
 
-# Додаємо індекси до колонок, які часто використовуються для вибірок/фільтрації:
+@measure_time
+def update_one(record_id, new_title, token):
+    data = {"title": new_title}
+    r = requests.put(f"{API_URL}/books/{record_id}", json=data, headers={"Authorization": f"Bearer {token}"})
+    return r.status_code
 
-class Genre(db.Model):
-    __tablename__ = 'genres'
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String, nullable=False, unique=True, index=True)  # індекс на name
+@measure_time
+def delete_one(record_id, token):
+    r = requests.delete(f"{API_URL}/books/{record_id}", headers={"Authorization": f"Bearer {token}"})
+    return r.status_code
 
-class Author(db.Model):
-    __tablename__ = 'authors'
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String, nullable=False, unique=True, index=True)  # індекс на name
-    books = relationship("Book", back_populates="author", cascade="all, delete")
-
-class Book(db.Model):
-    __tablename__ = 'books'
-    id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String, nullable=False, index=True)  # індекс на title
-    author_id = db.Column(db.Integer, db.ForeignKey('authors.id'), nullable=False)
-    genre_id = db.Column(db.Integer, db.ForeignKey('genres.id'), nullable=False)
-    author = relationship("Author", back_populates="books")
-    genre = relationship("Genre", lazy="joined")
-
-class User(db.Model):
-    __tablename__ = 'users'
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String, unique=True, nullable=False, index=True)  # індекс на username
-    password = db.Column(db.String, nullable=False)
-
-with app.app_context():
-    db.create_all()
-    if not User.query.filter_by(username='admin').first():
-        hashed_pw = pbkdf2_sha256.hash('admin')
-        admin_user = User(username='admin', password=hashed_pw)
-        db.session.add(admin_user)
-        db.session.commit()
-
-@app.route('/login', methods=['POST'])
 def login():
-    data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
-    user = User.query.filter_by(username=username).first()
-    if user and pbkdf2_sha256.verify(password, user.password):
-        access_token = create_access_token(identity=user.id)
-        return jsonify(access_token=access_token), 200
+    data = {"username": "admin", "password": "admin"}
+    r = requests.post(f"{API_URL}/login", json=data)
+    if r.status_code == 200:
+        return r.json()['access_token']
     else:
-        return jsonify(msg="Bad username or password"), 401
+        raise Exception("Login failed")
 
-@app.route('/logout', methods=['POST'])
-@jwt_required()
-def logout():
-    jti = get_jwt()["jti"]
-    jwt_blocklist.add(jti)
-    return jsonify(msg="Successfully logged out"), 200
+def run_benchmarks():
+    test_sizes =  [1000] 
+    #test_sizes = [10000, 100000,  1000000] занадто багато, оскільки довго чекати результат, тому в прикріпленні до завдання тільки на 1000
 
-@app.route('/books', methods=['POST'])
-@jwt_required()
-def add_book():
-    data = request.get_json()
-    title = data.get('title')
-    author_name = data.get('author_name')
-    genre_name = data.get('genre_name')
+    results = []
 
-    if not (title and author_name and genre_name):
-        return jsonify(msg="Missing required fields"), 400
+    for size in test_sizes:
+        requests.delete(f"{API_URL}/reset")
 
-    author = Author.query.filter_by(name=author_name).first()
-    if not author:
-        author = Author(name=author_name)
-        db.session.add(author)
-        db.session.commit()
+        token = login()
 
-    genre = Genre.query.filter_by(name=genre_name).first()
-    if not genre:
-        genre = Genre(name=genre_name)
-        db.session.add(genre)
-        db.session.commit()
+        insert_time, _ = insert_data(size, token)
+        select_all_time, all_books = select_all(token)
+        select_one_time, _ = select_one(1, token)
+        update_one_time, _ = update_one(1, "Updated Title", token)
+        delete_one_time, _ = delete_one(1, token)
 
-    book = Book(title=title, author=author, genre=genre)
-    db.session.add(book)
-    db.session.commit()
-    return jsonify(msg="Book added", book_id=book.id), 201
+        results.append({
+            "size": size,
+            "insert_time": insert_time,
+            "select_all_time": select_all_time,
+            "select_one_time": select_one_time,
+            "update_one_time": update_one_time,
+            "delete_one_time": delete_one_time
+        })
 
-@app.route('/books', methods=['GET'])
-@jwt_required()
-def get_books():    
-    books = Book.query.all()
-    result = [{
-        "id": b.id,
-        "title": b.title,
-        "author": b.author.name,
-        "genre": b.genre.name
-    } for b in books]
-    return jsonify(books=result), 200
+    return results
 
-@app.route('/books/<int:book_id>', methods=['PUT'])
-@jwt_required()
-def update_book(book_id):
-    data = request.get_json()
-    title = data.get('title')
-    book = Book.query.get(book_id)
-    if not book:
-        return jsonify(msg="Book not found"), 404
-
-    if title:
-        book.title = title
-        db.session.commit()
-    return jsonify(msg="Book updated"), 200
-
-@app.route('/books/<int:book_id>', methods=['DELETE'])
-@jwt_required()
-def delete_book(book_id):
-    book = Book.query.get(book_id)
-    if not book:
-        return jsonify(msg="Book not found"), 404
-
-    db.session.delete(book)
-    db.session.commit()
-    return jsonify(msg="Book deleted"), 200
-
-@app.route('/reset', methods=['DELETE'])
-def reset():
-    db.drop_all()
-    db.create_all()
-    if not User.query.filter_by(username='admin').first():
-        hashed_pw = pbkdf2_sha256.hash('admin')
-        admin_user = User(username='admin', password=hashed_pw)
-        db.session.add(admin_user)
-        db.session.commit()
-    return jsonify(msg="Database reset done"), 200
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+if __name__ == "__main__":
+    benchmark_results = run_benchmarks()
+    print("Size | Insert_time(s) | Select_all_time(s) | Select_one_time(s) | Update_one_time(s) | Delete_one_time(s)")
+    for r in benchmark_results:
+        print(f"{r['size']} | {r['insert_time']:.4f} | {r['select_all_time']:.4f} | {r['select_one_time']:.4f} | {r['update_one_time']:.4f} | {r['delete_one_time']:.4f}")

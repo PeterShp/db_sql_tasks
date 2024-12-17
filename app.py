@@ -9,9 +9,10 @@ from datetime import timedelta
 
 app = Flask(__name__)
 
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://admin:admin@34.141.145.160:5432/postgres' #Пароль з дійсного замінений на 1234 для гіту
+# Підключення до БД
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://admin:admin@34.141.145.160:5432/postgres'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = 'admin'
+app.config['JWT_SECRET_KEY'] = 'secret_key'
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
 
 db = SQLAlchemy(app)
@@ -24,21 +25,23 @@ def check_if_token_revoked(jwt_header, jwt_payload):
     jti = jwt_payload["jti"]
     return jti in jwt_blocklist
 
+# Додаємо індекси до колонок, які часто використовуються для вибірок/фільтрації:
+
 class Genre(db.Model):
     __tablename__ = 'genres'
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String, nullable=False, unique=True)
+    name = db.Column(db.String, nullable=False, unique=True, index=True)  # індекс на name
 
 class Author(db.Model):
     __tablename__ = 'authors'
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String, nullable=False, unique=True)
+    name = db.Column(db.String, nullable=False, unique=True, index=True)  # індекс на name
     books = relationship("Book", back_populates="author", cascade="all, delete")
 
 class Book(db.Model):
     __tablename__ = 'books'
     id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String, nullable=False)
+    title = db.Column(db.String, nullable=False, index=True)  # індекс на title
     author_id = db.Column(db.Integer, db.ForeignKey('authors.id'), nullable=False)
     genre_id = db.Column(db.Integer, db.ForeignKey('genres.id'), nullable=False)
     author = relationship("Author", back_populates="books")
@@ -47,7 +50,7 @@ class Book(db.Model):
 class User(db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String, unique=True, nullable=False)
+    username = db.Column(db.String, unique=True, nullable=False, index=True)  # індекс на username
     password = db.Column(db.String, nullable=False)
 
 with app.app_context():
@@ -107,7 +110,7 @@ def add_book():
 
 @app.route('/books', methods=['GET'])
 @jwt_required()
-def get_books():
+def get_books():    
     books = Book.query.all()
     result = [{
         "id": b.id,
@@ -152,7 +155,6 @@ def reset():
         db.session.add(admin_user)
         db.session.commit()
     return jsonify(msg="Database reset done"), 200
-
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
